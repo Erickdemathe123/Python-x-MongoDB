@@ -1,130 +1,49 @@
-import os
-import sqlite3
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from pymongo import MongoClient
 
 app = Flask(__name__)
-DATABASE = 'database.db'
+CORS(app)
 
-def init_db():
-    if os.path.exists(DATABASE):
-        os.remove(DATABASE)  # Remove o banco antigo (para testes locais)
-    with open('schema.sql', encoding='utf-8') as f:
-        conn = sqlite3.connect(DATABASE)
-        conn.executescript(f.read())
-        conn.commit()
-        conn.close()
+# Conexão com o MongoDB (ajuste se necessário)
+client = MongoClient("mongodb://localhost:27017/")
+db = client["cadastroDB"]
+collection = db["documentos"]
 
-def get_db_connection():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/cadastrar', methods=['POST'])
+# Rota para cadastrar documento
+@app.route("/cadastrar", methods=["POST"])
 def cadastrar():
-    data = request.get_json()
-    nome = data.get('nome')
-    rua = data.get('rua')
-    filhos = data.get('filhos', [])
+    dados = request.get_json()
+    if not dados:
+        return jsonify({"erro": "Dados ausentes"}), 400
+    collection.insert_one(dados)
+    return jsonify({"mensagem": "Documento cadastrado com sucesso!"}), 201
 
-    if not nome or not rua:
-        return jsonify({'erro': 'Nome e rua são obrigatórios'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO documentos (nome, rua) VALUES (?, ?)", (nome, rua))
-    doc_id = cursor.lastrowid
-
-    for filho in filhos:
-        cursor.execute("INSERT INTO filhos (documento_id, nome) VALUES (?, ?)", (doc_id, filho.strip()))
-
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Documento cadastrado com sucesso'}), 201
-
-@app.route('/pesquisar_nome', methods=['GET'])
+# Rota para pesquisar por nome
+@app.route("/pesquisar_nome", methods=["GET"])
 def pesquisar_nome():
-    nome = request.args.get('nome')
-    if not nome:
-        return jsonify({'erro': 'Parâmetro "nome" é obrigatório'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM documentos WHERE nome = ?", (nome,))
-    docs = cursor.fetchall()
-
-    resultados = []
-    for doc in docs:
-        cursor.execute("SELECT nome FROM filhos WHERE documento_id = ?", (doc['id'],))
-        filhos = [f['nome'] for f in cursor.fetchall()]
-        resultados.append({
-            'id': doc['id'],
-            'nome': doc['nome'],
-            'rua': doc['rua'],
-            'filhos': filhos
-        })
-
-    conn.close()
+    nome = request.args.get("nome")
+    resultados = list(collection.find({"nome": nome}, {"_id": 0}))
     return jsonify(resultados)
 
-@app.route('/pesquisar_rua', methods=['GET'])
+# Rota para pesquisar por rua
+@app.route("/pesquisar_rua", methods=["GET"])
 def pesquisar_rua():
-    rua = request.args.get('rua')
-    if not rua:
-        return jsonify({'erro': 'Parâmetro "rua" é obrigatório'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM documentos WHERE rua = ?", (rua,))
-    docs = cursor.fetchall()
-
-    resultados = []
-    for doc in docs:
-        cursor.execute("SELECT nome FROM filhos WHERE documento_id = ?", (doc['id'],))
-        filhos = [f['nome'] for f in cursor.fetchall()]
-        resultados.append({
-            'id': doc['id'],
-            'nome': doc['nome'],
-            'rua': doc['rua'],
-            'filhos': filhos
-        })
-
-    conn.close()
+    rua = request.args.get("rua")
+    resultados = list(collection.find({"endereco.rua": rua}, {"_id": 0}))
     return jsonify(resultados)
 
-@app.route('/pesquisar_filhos', methods=['GET'])
+# Rota para pesquisar por filhos
+@app.route("/pesquisar_filhos", methods=["GET"])
 def pesquisar_filhos():
-    nome_filho = request.args.get('filho')
-    if not nome_filho:
-        return jsonify({'erro': 'Parâmetro "filho" é obrigatório'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT d.id, d.nome, d.rua
-        FROM documentos d
-        JOIN filhos f ON d.id = f.documento_id
-        WHERE f.nome = ?
-    """, (nome_filho,))
-    docs = cursor.fetchall()
-
-    resultados = []
-    for doc in docs:
-        cursor.execute("SELECT nome FROM filhos WHERE documento_id = ?", (doc['id'],))
-        filhos = [f['nome'] for f in cursor.fetchall()]
-        resultados.append({
-            'id': doc['id'],
-            'nome': doc['nome'],
-            'rua': doc['rua'],
-            'filhos': filhos
-        })
-
-    conn.close()
+    filho = request.args.get("filho")
+    resultados = list(collection.find({"filhos": filho}, {"_id": 0}))
     return jsonify(resultados)
 
-if __name__ == '__main__':
-    init_db()
+# Rota principal
+@app.route("/")
+def index():
+    return "API Python x MongoDB ativa!"
+
+if __name__ == "__main__":
     app.run(debug=True)
